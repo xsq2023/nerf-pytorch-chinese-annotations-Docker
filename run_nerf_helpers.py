@@ -47,17 +47,17 @@ class Embedder:
 
 def get_embedder(multires, i=0):
     if i == -1:
-        return nn.Identity(), 3
+        return nn.Identity(), 3 #恒等映射
     
     embed_kwargs = {
-                'include_input' : True,
-                'input_dims' : 3,
-                'max_freq_log2' : multires-1,
-                'num_freqs' : multires,
-                'log_sampling' : True,
-                'periodic_fns' : [torch.sin, torch.cos],
+    'include_input': True,      # 是否包含原始输入，保留低频信息，基本都为 True
+    'input_dims': 3,           # 输入维度（3D坐标）--》xyz
+    'max_freq_log2': multires-1, # 最大频率的log2值
+    'num_freqs': multires,     # 频率数量
+    'log_sampling': True,      # 对数尺度采样频率  #frequencies = [2^0, 2^1, 2^2, 2^3, 2^4] = [1, 2, 4, 8, 16]
+    'periodic_fns': [torch.sin, torch.cos],  # 使用的周期函数
     }
-    
+
     embedder_obj = Embedder(**embed_kwargs)
     embed = lambda x, eo=embedder_obj : eo.embed(x)
     return embed, embedder_obj.out_dim
@@ -76,11 +76,13 @@ class NeRF(nn.Module):
         self.skips = skips
         self.use_viewdirs = use_viewdirs
         
-        self.pts_linears = nn.ModuleList(
+        self.pts_linears = nn.ModuleList(   #点云输入处理层
             [nn.Linear(input_ch, W)] + [nn.Linear(W, W) if i not in self.skips else nn.Linear(W + input_ch, W) for i in range(D-1)])
         
         ### Implementation according to the official code release (https://github.com/bmild/nerf/blob/master/run_nerf_helpers.py#L104-L105)
         self.views_linears = nn.ModuleList([nn.Linear(input_ch_views + W, W//2)])
+
+        
 
         ### Implementation according to the paper
         # self.views_linears = nn.ModuleList(
@@ -89,7 +91,7 @@ class NeRF(nn.Module):
         if use_viewdirs:
             self.feature_linear = nn.Linear(W, W)
             self.alpha_linear = nn.Linear(W, 1)
-            self.rgb_linear = nn.Linear(W//2, 3)
+            self.rgb_linear = nn.Linear(W//2, 3)  #三维rgb
         else:
             self.output_linear = nn.Linear(W, output_ch)
 
@@ -103,7 +105,7 @@ class NeRF(nn.Module):
                 h = torch.cat([input_pts, h], -1)
 
         if self.use_viewdirs:
-            alpha = self.alpha_linear(h)
+            alpha = self.alpha_linear(h)  #输出密度值一维
             feature = self.feature_linear(h)
             h = torch.cat([feature, input_views], -1)
         

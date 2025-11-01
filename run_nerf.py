@@ -21,6 +21,7 @@ from load_LINEMOD import load_LINEMOD_data
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 np.random.seed(0)
+
 DEBUG = False
 
 
@@ -186,6 +187,7 @@ def create_nerf(args):
         embeddirs_fn, input_ch_views = get_embedder(args.multires_views, args.i_embed)
     output_ch = 5 if args.N_importance > 0 else 4
     skips = [4]
+    
     model = NeRF(D=args.netdepth, W=args.netwidth,
                  input_ch=input_ch, output_ch=output_ch, skips=skips,
                  input_ch_views=input_ch_views, use_viewdirs=args.use_viewdirs).to(device)
@@ -417,7 +419,7 @@ def render_rays(ray_batch,
 
     return ret
 
-
+#
 def config_parser():
 
     import configargparse
@@ -532,21 +534,23 @@ def config_parser():
 
 
 def train():
-
+    #命令行参数解析器
     parser = config_parser()
     args = parser.parse_args()
 
     # Load data
     K = None
-    if args.dataset_type == 'llff':
+    if args.dataset_type == 'llff':  #常用于神经场景表示任务，例如 NeRF
         images, poses, bds, render_poses, i_test = load_llff_data(args.datadir, args.factor,
                                                                   recenter=True, bd_factor=.75,
                                                                   spherify=args.spherify)
+
+        #llff提供了多分辨率图像（快慢结合），完整的几何信息：1.相机位姿：每张图像的3D位置和朝向；2.场景边界：整个场景的深度范围（near/far）；3.相机内参：焦距、图像尺寸等
         hwf = poses[0,:3,-1]
         poses = poses[:,:3,:4]
         print('Loaded llff', images.shape, render_poses.shape, hwf, args.datadir)
         if not isinstance(i_test, list):
-            i_test = [i_test]
+            i_test = [i_test]   # 确保 i_test 是列表
 
         if args.llffhold > 0:
             print('Auto LLFF holdout,', args.llffhold)
@@ -566,7 +570,7 @@ def train():
             far = 1.
         print('NEAR FAR', near, far)
 
-    elif args.dataset_type == 'blender':
+    elif args.dataset_type == 'blender':   #常用于 3D 渲染任务
         images, poses, render_poses, hwf, i_split = load_blender_data(args.datadir, args.half_res, args.testskip)
         print('Loaded blender', images.shape, render_poses.shape, hwf, args.datadir)
         i_train, i_val, i_test = i_split
@@ -579,7 +583,7 @@ def train():
         else:
             images = images[...,:3]
 
-    elif args.dataset_type == 'LINEMOD':
+    elif args.dataset_type == 'LINEMOD': #常用于物体检测、分割和姿态估计任务。它包含从不同视角拍摄的物体图像
         images, poses, render_poses, hwf, K, i_split, near, far = load_LINEMOD_data(args.datadir, args.half_res, args.testskip)
         print(f'Loaded LINEMOD, images shape: {images.shape}, hwf: {hwf}, K: {K}')
         print(f'[CHECK HERE] near: {near}, far: {far}.')
@@ -590,7 +594,7 @@ def train():
         else:
             images = images[...,:3]
 
-    elif args.dataset_type == 'deepvoxels':
+    elif args.dataset_type == 'deepvoxels':  #用于多视图立体任务，即从不同视角拍摄场景的多张图像
 
         images, poses, render_poses, hwf, i_split = load_dv_data(scene=args.shape,
                                                                  basedir=args.datadir,
@@ -638,6 +642,7 @@ def train():
 
     # Create nerf model
     render_kwargs_train, render_kwargs_test, start, grad_vars, optimizer = create_nerf(args)
+    
     global_step = start
 
     bds_dict = {

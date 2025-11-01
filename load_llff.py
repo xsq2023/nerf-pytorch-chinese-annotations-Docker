@@ -62,18 +62,26 @@ def _minify(basedir, factors=[], resolutions=[]):
 def _load_data(basedir, factor=None, width=None, height=None, load_imgs=True):
     
     poses_arr = np.load(os.path.join(basedir, 'poses_bounds.npy'))
-    poses = poses_arr[:, :-2].reshape([-1, 3, 5]).transpose([1,2,0])
+
+    '''
+    每张图像的数据行包含：
+[ R11, R12, R13, t1,    H,
+  R21, R22, R23, t2,    W,
+  R31, R32, R33, t3, focal, near, far ]
+    
+    '''
+    poses = poses_arr[:, :-2].reshape([-1, 3, 5]).transpose([1,2,0])  #前15列，再做 reshape--》[Num, 3, 5]---》再做转置维度# 形状: [3, 5, Num]
     bds = poses_arr[:, -2:].transpose([1,0])
     
     img0 = [os.path.join(basedir, 'images', f) for f in sorted(os.listdir(os.path.join(basedir, 'images'))) \
             if f.endswith('JPG') or f.endswith('jpg') or f.endswith('png')][0]
-    sh = imageio.imread(img0).shape
+    sh = imageio.imread(img0).shape#获取size
     
     sfx = ''
     
     if factor is not None:
         sfx = '_{}'.format(factor)
-        _minify(basedir, factors=[factor])
+        _minify(basedir, factors=[factor])  #检查所需的图像目录是否存在
         factor = factor
     elif height is not None:
         factor = sh[0] / float(height)
@@ -93,26 +101,27 @@ def _load_data(basedir, factor=None, width=None, height=None, load_imgs=True):
         print( imgdir, 'does not exist, returning' )
         return
     
+    #从指定的图像文件夹中获取所有 .JPG、.jpg 和 .png 格式的图像文件路径。
     imgfiles = [os.path.join(imgdir, f) for f in sorted(os.listdir(imgdir)) if f.endswith('JPG') or f.endswith('jpg') or f.endswith('png')]
     if poses.shape[-1] != len(imgfiles):
         print( 'Mismatch between imgs {} and poses {} !!!!'.format(len(imgfiles), poses.shape[-1]) )
         return
     
     sh = imageio.imread(imgfiles[0]).shape
-    poses[:2, 4, :] = np.array(sh[:2]).reshape([2, 1])
-    poses[2, 4, :] = poses[2, 4, :] * 1./factor
+    poses[:2, 4, :] = np.array(sh[:2]).reshape([2, 1])  #将 高度（H） 和 宽度（W） 放入 poses 矩阵的第五列（poses[:, 4, :]）的前两行。
+    poses[2, 4, :] = poses[2, 4, :] * 1./factor  #将 焦距（focal） 放入 poses 矩阵的第五列的第三行，并根据 factor 缩放它
     
     if not load_imgs:
         return poses, bds
     
     def imread(f):
         if f.endswith('png'):
-            return imageio.imread(f, ignoregamma=True)
+            return imageio.imread(f)
         else:
             return imageio.imread(f)
         
     imgs = imgs = [imread(f)[...,:3]/255. for f in imgfiles]
-    imgs = np.stack(imgs, -1)  
+    imgs = np.stack(imgs, -1)  #将所有图像按最后一个轴（即图像序列的维度）堆叠成一个 4D 数组。最终的 imgs 数组形状是 (height, width, 3, num_images)
     
     print('Loaded image data', imgs.shape, poses[:,-1,0])
     return poses, bds, imgs
@@ -128,7 +137,7 @@ def normalize(x):
 def viewmatrix(z, up, pos):
     vec2 = normalize(z)
     vec1_avg = up
-    vec0 = normalize(np.cross(vec1_avg, vec2))
+    vec0 = normalize(np.cross(vec1_avg, vec2))  #叉乘得到x
     vec1 = normalize(np.cross(vec2, vec0))
     m = np.stack([vec0, vec1, vec2, pos], 1)
     return m
@@ -165,14 +174,14 @@ def render_path_spiral(c2w, up, rads, focal, zdelta, zrate, rots, N):
 
 def recenter_poses(poses):
 
-    poses_ = poses+0
-    bottom = np.reshape([0,0,0,1.], [1,4])
+    poses_ = poses+0  #copy
+    bottom = np.reshape([0,0,0,1.], [1,4])  #思维齐次坐标的底部
     c2w = poses_avg(poses)
-    c2w = np.concatenate([c2w[:3,:4], bottom], -2)
+    c2w = np.concatenate([c2w[:3,:4], bottom], -2)#x轴拼接--》4*4视图变换齐次 matrix
     bottom = np.tile(np.reshape(bottom, [1,1,4]), [poses.shape[0],1,1])
     poses = np.concatenate([poses[:,:3,:4], bottom], -2)
 
-    poses = np.linalg.inv(c2w) @ poses
+    poses = np.linalg.inv(c2w) @ poses #将所有相机的姿势通过矩阵乘法转换到新的坐标系中
     poses_[:,:3,:4] = poses[:,:3,:4]
     poses = poses_
     return poses
@@ -183,10 +192,10 @@ def recenter_poses(poses):
 
 def spherify_poses(poses, bds):
     
-    p34_to_44 = lambda p : np.concatenate([p, np.tile(np.reshape(np.eye(4)[-1,:], [1,1,4]), [p.shape[0], 1,1])], 1)
+    p34_to_44 = lambda p : np.concatenate([p, np.tile(np.reshape(np.eye(4)[-1,:], [1,1,4]), [p.shape[0], 1,1])], 1)  #3x4 的矩阵转换成 4x4 的矩阵
     
-    rays_d = poses[:,:3,2:3]
-    rays_o = poses[:,:3,3:4]
+    rays_d = poses[:,:3,2:3]  #nx3x1，z-axis direction  ，相机朝向
+    rays_o = poses[:,:3,3:4]    #nx3x1，camera origin，相机位置
 
     def min_line_dist(rays_o, rays_d):
         A_i = np.eye(3) - rays_d * np.transpose(rays_d, [0,2,1])
@@ -247,16 +256,16 @@ def load_llff_data(basedir, factor=8, recenter=True, bd_factor=.75, spherify=Fal
     print('Loaded', basedir, bds.min(), bds.max())
     
     # Correct rotation matrix ordering and move variable dim to axis 0
-    poses = np.concatenate([poses[:, 1:2, :], -poses[:, 0:1, :], poses[:, 2:, :]], 1)
-    poses = np.moveaxis(poses, -1, 0).astype(np.float32)
+    poses = np.concatenate([poses[:, 1:2, :], -poses[:, 0:1, :], poses[:, 2:, :]], 1)   #原始相机坐标系旋转矩阵 转换为 NeRF 所需的坐标系。
+    poses = np.moveaxis(poses, -1, 0).astype(np.float32)  #把图像数量维度移到最前面
     imgs = np.moveaxis(imgs, -1, 0).astype(np.float32)
     images = imgs
     bds = np.moveaxis(bds, -1, 0).astype(np.float32)
     
     # Rescale if bd_factor is provided
-    sc = 1. if bd_factor is None else 1./(bds.min() * bd_factor)
-    poses[:,:3,3] *= sc
-    bds *= sc
+    sc = 1. if bd_factor is None else 1./(bds.min() * bd_factor)  #bd缩放因子
+    poses[:,:3,3] *= sc  #相机的平移部分进行缩放
+    bds *= sc  
     
     if recenter:
         poses = recenter_poses(poses)
@@ -306,8 +315,8 @@ def load_llff_data(basedir, factor=8, recenter=True, bd_factor=.75, spherify=Fal
     print('Data:')
     print(poses.shape, images.shape, bds.shape)
     
-    dists = np.sum(np.square(c2w[:3,3] - poses[:,:3,3]), -1)
-    i_test = np.argmin(dists)
+    dists = np.sum(np.square(c2w[:3,3] - poses[:,:3,3]), -1) #相机位置与平均位置之间的 距离平方。
+    i_test = np.argmin(dists)  #找到最小，作为测试相机
     print('HOLDOUT view is', i_test)
     
     images = images.astype(np.float32)
